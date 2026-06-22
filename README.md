@@ -16,25 +16,105 @@ One-Shot-Script, das einen frischen Hetzner-Server härtet und für **Coolify** 
 | 8 | SSH-Hardening (key-only, Backup, Validierung, Aussperr-Schutz) |
 | 9 | Optionale Coolify-Installation |
 
-## Nutzung — One-Liner
+## Komplette Anleitung (Schritt für Schritt)
 
-Frischer Hetzner-Server, eingeloggt **als root**. Script laden und ausführen:
+Von „frischer Hetzner-Server" bis „gehärteter Coolify-Server". Alle lokalen
+Befehle laufen auf deinem Rechner, alle Server-Befehle auf dem Server.
+
+### Schritt 1 — SSH-Key mit eigener Datei erstellen (lokal)
+
+Pro Server einen eigenen Key (nicht den `id_ed25519`-Standardkey mitbenutzen).
+`<name>` z.B. den Servernamen verwenden:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/coolify-<name> -C "coolify-<name>"
+```
+
+- Passphrase: für deinen **persönlichen Login-Key** gern eine setzen.
+- Es entstehen zwei Dateien: `~/.ssh/coolify-<name>` (privat, geheim halten)
+  und `~/.ssh/coolify-<name>.pub` (öffentlich, kommt auf den Server).
+
+Public-Key anzeigen (brauchst du gleich):
+
+```bash
+cat ~/.ssh/coolify-<name>.pub
+```
+
+### Schritt 2 — Hetzner-Server mit diesem Key erstellen
+
+Im Hetzner Cloud Panel beim Erstellen des Servers:
+
+1. **Image:** Ubuntu 24.04
+2. **SSH Keys:** „SSH key hinzufügen" → den Inhalt von `coolify-<name>.pub`
+   einfügen. So ist der Server von Anfang an key-only (kein Root-Passwort,
+   kein „Too many authentication failures"-Gefummel).
+
+> Der Key landet automatisch in `/root/.ssh/authorized_keys` auf dem Server.
+
+### Schritt 3 — Per SSH verbinden
+
+Wichtig: **`-i` + `IdentitiesOnly=yes`**, damit nur dieser eine Key angeboten
+wird. Ohne das bietet dein SSH-Agent alle Keys an, und der Server bricht nach
+6 Versuchen mit `Too many authentication failures` ab.
+
+```bash
+ssh -i ~/.ssh/coolify-<name> -o IdentitiesOnly=yes root@<server-ip>
+```
+
+**Komfort-Variante** (empfohlen): einmalig in `~/.ssh/config` eintragen…
+
+```
+Host coolify-<name>
+    HostName <server-ip>
+    User root
+    IdentityFile ~/.ssh/coolify-<name>
+    IdentitiesOnly yes
+```
+
+…danach reicht `ssh coolify-<name>`.
+
+### Schritt 4 — Hardening-Script laden und ausführen
+
+Auf dem Server (als root):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oliverhees/coolify-server-hardening/main/scripts/harden-coolify-server.sh -o harden.sh && bash harden.sh
 ```
 
-> **Warum nicht `curl … | bash`?** Das Script ist interaktiv (fragt Username,
-> Port, Key ab). Bei `curl | bash` wäre stdin die Pipe statt dein Terminal —
-> die Abfragen würden übersprungen. Darum erst laden, dann ausführen.
-> Alternativ (nur bash, nicht sh): `bash <(curl -fsSL …/harden-coolify-server.sh)`
+> **Warum nicht `curl … | bash`?** Das Script ist interaktiv. Bei `curl | bash`
+> wäre stdin die Pipe statt dein Terminal — die Abfragen würden übersprungen.
+> Darum erst laden, dann ausführen. (Nur-bash-Alternative:
+> `bash <(curl -fsSL …/harden-coolify-server.sh)`)
+>
+> **Nicht über die Hetzner-Web-Konsole einfügen!** Die VNC-Konsole verstümmelt
+> lange Befehle mit Sonderzeichen (`://` wird zu `: //`, `&&` zu `77`). Immer
+> über echtes SSH (Schritt 3) arbeiten.
 
 Das Script fragt interaktiv ab:
 - Username + Passwort des neuen sudo-Users
 - Externer SSH-Port (Standard 2222)
 - Hostname (optional)
-- SSH-Public-Key (oder vorhandene root-Keys übernehmen)
-- Ob Coolify direkt installiert werden soll
+- SSH-Public-Key — hier **„von root übernehmen" mit `J` bestätigen**, dann
+  bekommt dein neuer sudo-User denselben `coolify-<name>`-Key
+- Ob Coolify direkt installiert werden soll (falls schon installiert: `n`)
+
+### Schritt 5 — Neuen Zugang testen (BEVOR du die alte Sitzung schließt!)
+
+Die alte Root-Sitzung **offen lassen**. In einem **zweiten** Terminal mit dem
+neuen User + neuen Port verbinden (derselbe Key wurde ja übernommen):
+
+```bash
+ssh -i ~/.ssh/coolify-<name> -o IdentitiesOnly=yes -p <PORT> <user>@<server-ip>
+```
+
+Erst wenn das klappt, ist Aussperren ausgeschlossen — dann erst die alte
+Sitzung schließen. Klappt es nicht → in der noch offenen Root-Sitzung die
+Wiederherstellung unten ausführen.
+
+### Schritt 6 — Hetzner Cloud Firewall + Coolify
+
+Weiter mit „Nach dem Script — Pflicht-Schritte" (Cloud Firewall) und ggf.
+Coolify-Setup weiter unten.
 
 ## ⚠️ Die drei Coolify-Fallstricke (warum dieses Script anders ist)
 
@@ -57,9 +137,9 @@ Das Script fragt interaktiv ab:
 
 ## Nach dem Script — Pflicht-Schritte
 
-1. **SSH testen** (aktuelle Sitzung offen lassen!):
+1. **SSH testen** (aktuelle Sitzung offen lassen!) — siehe Schritt 5 oben:
    ```bash
-   ssh -p <PORT> <user>@<server-ip>
+   ssh -i ~/.ssh/coolify-<name> -o IdentitiesOnly=yes -p <PORT> <user>@<server-ip>
    ```
    Falls es nicht klappt — Wiederherstellung steht am Ende der Script-Ausgabe.
 
